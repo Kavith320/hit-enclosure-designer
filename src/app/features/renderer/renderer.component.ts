@@ -2,6 +2,7 @@ import {
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   ElementRef,
   inject,
@@ -13,6 +14,7 @@ import type { Geom3 } from '@jscad/modeling/src/geometries/types';
 import type { Vec3 } from '@jscad/modeling/src/maths/types';
 import measureBoundingBox from '@jscad/modeling/src/measurements/measureBoundingBox';
 import { colorize } from '@jscad/modeling/src/colors';
+import { geom3 } from '@jscad/modeling/src/geometries';
 import { union } from '@jscad/modeling/src/operations/booleans';
 import { translate } from '@jscad/modeling/src/operations/transforms';
 import {
@@ -31,14 +33,27 @@ import { internalWalls } from '../../core/enclosure/internalwalls';
 import { lid } from '../../core/enclosure/lid';
 import { pcbMountsOnBase, pcbMountsOnLid } from '../../core/enclosure/pcbmount';
 import {
-  pcbBoard,
-  pcbCollision,
-  pcbComponentZone,
-  type PCBCollisionResult,
-} from '../../core/enclosure/pcbpreview';
+  internalObjectSolid,
+  internalPartCollisions,
+  pcbItemSolids,
+  type PartCollision,
+} from '../../core/enclosure/internalparts';
 import { waterProofSeal } from '../../core/enclosure/waterproofseal';
+import {
+  buildPickMesh,
+  edgeToEdge,
+  nearestEdge,
+  pointToPoint,
+  raycast,
+  snapPoint,
+  type MeasureResult,
+  type PickMesh,
+  type Segment,
+  type SnapKind,
+  type V3,
+} from '../../core/measure';
 import type { Params } from '../../core/params';
-import { toMetricParams } from '../../core/units';
+import { MM_PER_INCH, toMetricParams } from '../../core/units';
 import { EnclosureStateService } from '../../core/state/enclosure-state.service';
 
 const SPACING = 20;
@@ -65,6 +80,7 @@ const lidDeps = [
   'snapFit',
   'lidBedChamfer',
   'lidTopChamfer',
+  'sketches',
 ];
 const baseDeps = [
   'length',
@@ -94,6 +110,7 @@ const baseDeps = [
   'insertClearance',
   'snapFit',
   'baseBedChamfer',
+  'sketches',
 ];
 const sealDeps = [
   'length',
@@ -168,6 +185,13 @@ const gridDeps = [
   'showDinRailMount',
   'cableClamps',
 ];
+
+const hexToRgb = (hex: string): [number, number, number] => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? '');
+  if (!m) return [0.96, 0.62, 0.04];
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+};
 
 const createIdentityMatrix = (): number[] => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -312,6 +336,42 @@ type SurfaceAnchor = {
   normal: Vec3Tuple;
 };
 
+export type MeasureMode = 'off' | 'point' | 'edge';
+
+type MeasurePick = {
+  point: V3;
+  kind: SnapKind;
+  edge?: Segment;
+};
+
+type ScreenPoint = { x: number; y: number };
+type ScreenLine = { x1: number; y1: number; x2: number; y2: number };
+
+type MeasureOverlay = {
+  hover: (ScreenPoint & { kind: SnapKind }) | null;
+  hoverEdge: ScreenLine | null;
+  markers: ScreenPoint[];
+  edges: ScreenLine[];
+  line: ScreenLine | null;
+  label: (ScreenPoint & { text: string }) | null;
+};
+
+const EMPTY_OVERLAY: MeasureOverlay = {
+  hover: null,
+  hoverEdge: null,
+  markers: [],
+  edges: [],
+  line: null,
+  label: null,
+};
+
+/** Snap radii in screen pixels. */
+const VERTEX_SNAP_PX = 12;
+const EDGE_SNAP_PX = 9;
+const EDGE_PICK_PX = 22;
+/** Max pointer travel (px) between down/up that still counts as a click. */
+const CLICK_SLOP_PX = 4;
+
 @Component({
   selector: 'app-renderer',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -322,6 +382,8 @@ type SurfaceAnchor = {
     '(pointerup)': 'onPointerUp($event)',
     '(wheel)': 'onWheel($event)',
     '(contextmenu)': '$event.preventDefault()',
+    '(pointerleave)': 'onPointerLeave()',
+    '(window:keydown.escape)': 'clearMeasurement()',
   },
   templateUrl: './renderer.component.html',
 })
@@ -363,12 +425,9 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
   private internalWallsModel: Geom3 | null = null;
   private cableClampsModel: Geom3 | null = null;
 
-  readonly pcbCollision = signal<PCBCollisionResult>({
-    collides: false,
-    hitsWalls: false,
-    hitsCeiling: false,
-    overlapVolume: 0,
-  });
+  /** Collision result for every visible PCB / internal object. */
+  readonly partCollisions = signal<PartCollision[]>([]);
+  readonly collidingParts = computed(() => this.partCollisions().filter((p) => p.collides));
 
   private model: Geom3 | null = null;
   private renderOptions: RenderOptions | null = null;
@@ -386,6 +445,39 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
   private wheelInteractionHandle: ReturnType<typeof setTimeout> | null = null;
 
   readonly surfaceLabels = signal<SurfaceLabel[]>([]);
+
+  // ---- Ruler / measurement tool -------------------------------------------
+  readonly measureMode = signal<MeasureMode>('off');
+  readonly measureResult = signal<MeasureResult | null>(null);
+  readonly measureOverlay = signal<MeasureOverlay>(EMPTY_OVERLAY);
+  readonly measurePickCount = signal(0);
+  readonly isImperial = computed(() => this.state.params().measurementSystem === 'imperial');
+  readonly measureHint = computed(() => {
+    const mode = this.measureMode();
+    if (mode === 'off') return '';
+    const count = this.measurePickCount();
+    if (mode === 'point') {
+      return count === 0
+        ? 'Click the first point (snaps to corners & edges)'
+        : count === 1
+          ? 'Click the second point'
+          : 'Click to start a new measurement · Esc to clear';
+    }
+    return count === 0
+      ? 'Click near the first edge'
+      : count === 1
+        ? 'Click near the second edge'
+        : 'Click to start a new measurement · Esc to clear';
+  });
+
+  private pickMesh: PickMesh | null = null;
+  private measurePicks: MeasurePick[] = [];
+  private hoverPick: MeasurePick | null = null;
+  private pendingHover: { x: number; y: number } | null = null;
+  private downX = 0;
+  private downY = 0;
+  private downButton = -1;
+  private downModifier = false;
 
   constructor() {
     effect(() => {
@@ -419,6 +511,12 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
 
   onPointerMove(event: PointerEvent): void {
     if (!this.pointerDown) {
+      if (this.measureMode() !== 'off') {
+        const local = this.toLocal(event);
+        if (local) {
+          this.pendingHover = local;
+        }
+      }
       return;
     }
 
@@ -443,14 +541,256 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
     this.pointerDown = true;
     this.lastX = event.pageX;
     this.lastY = event.pageY;
-    this.containerRef?.nativeElement.setPointerCapture(event.pointerId);
+    this.downX = event.clientX;
+    this.downY = event.clientY;
+    this.downButton = event.button;
+    this.downModifier = event.ctrlKey || event.metaKey || event.shiftKey;
+    try {
+      this.containerRef?.nativeElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture can fail (e.g. synthetic events / unknown pointer id): dragging
+      // still works, it just won't continue outside the canvas.
+    }
     this.updateSurfaceLabels();
   }
 
   onPointerUp(event: PointerEvent): void {
+    const wasDown = this.pointerDown;
     this.pointerDown = false;
-    this.containerRef?.nativeElement.releasePointerCapture(event.pointerId);
+    try {
+      this.containerRef?.nativeElement.releasePointerCapture(event.pointerId);
+    } catch {
+      // Not captured - nothing to release.
+    }
     this.updateSurfaceLabels();
+
+    const moved = Math.hypot(event.clientX - this.downX, event.clientY - this.downY);
+    if (
+      wasDown &&
+      this.measureMode() !== 'off' &&
+      this.downButton === 0 &&
+      !this.downModifier &&
+      moved <= CLICK_SLOP_PX
+    ) {
+      const local = this.toLocal(event);
+      if (local) {
+        this.handleMeasureClick(local.x, local.y);
+      }
+    }
+  }
+
+  onPointerLeave(): void {
+    this.pendingHover = null;
+    if (this.hoverPick) {
+      this.hoverPick = null;
+      this.updateMeasureOverlay();
+    }
+  }
+
+  // ---- Ruler public API (used by the template) ----------------------------
+
+  setMeasureMode(mode: MeasureMode): void {
+    if (this.measureMode() === mode) {
+      return;
+    }
+    this.measureMode.set(mode);
+    this.measurePicks = [];
+    this.hoverPick = null;
+    this.measurePickCount.set(0);
+    this.measureResult.set(null);
+    this.updateMeasureOverlay();
+  }
+
+  toggleMeasure(): void {
+    this.setMeasureMode(this.measureMode() === 'off' ? 'point' : 'off');
+  }
+
+  clearMeasurement(): void {
+    this.measurePicks = [];
+    this.measurePickCount.set(0);
+    this.measureResult.set(null);
+    this.updateMeasureOverlay();
+  }
+
+  formatLength(mm: number): string {
+    const metric = `${mm.toFixed(2)} mm`;
+    return this.isImperial() ? `${metric} (${(mm / MM_PER_INCH).toFixed(3)} in)` : metric;
+  }
+
+  // ---- Ruler internals ----------------------------------------------------
+
+  private toLocal(event: { clientX: number; clientY: number }): { x: number; y: number } | null {
+    const container = this.containerRef?.nativeElement;
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  private getPickMesh(): PickMesh | null {
+    if (!this.model) return null;
+    if (!this.pickMesh) {
+      this.pickMesh = buildPickMesh(geom3.toPolygons(this.model) as { vertices: V3[] }[]);
+    }
+    return this.pickMesh;
+  }
+
+  /** Camera basis + ray through a screen pixel (container-local coords). */
+  private screenRay(x: number, y: number): { origin: V3; dir: V3; worldPerPx: number } | null {
+    const container = this.containerRef?.nativeElement;
+    if (!container) return null;
+    const width = Math.max(container.clientWidth, 1);
+    const height = Math.max(container.clientHeight, 1);
+
+    const cameraPosition = this.camera.position as Vec3Tuple;
+    const cameraTarget = this.camera.target as Vec3Tuple;
+    const cameraUp = (this.camera.up as Vec3Tuple | undefined) ?? [0, 0, 1];
+    const zAxis = this.normalize(this.subtract(cameraPosition, cameraTarget));
+    const xAxis = this.normalize(this.cross(cameraUp, zAxis));
+    const yAxis = this.cross(zAxis, xAxis);
+
+    const rawFov = this.camera.fov;
+    const fov = rawFov > Math.PI ? (rawFov * Math.PI) / 180 : rawFov;
+    const halfFovTan = Math.tan(fov / 2);
+    const aspect = width / height;
+
+    const ndcX = (x / width) * 2 - 1;
+    const ndcY = 1 - (y / height) * 2;
+
+    const dir = this.normalize([
+      -zAxis[0] + xAxis[0] * ndcX * halfFovTan * aspect + yAxis[0] * ndcY * halfFovTan,
+      -zAxis[1] + xAxis[1] * ndcX * halfFovTan * aspect + yAxis[1] * ndcY * halfFovTan,
+      -zAxis[2] + xAxis[2] * ndcX * halfFovTan * aspect + yAxis[2] * ndcY * halfFovTan,
+    ]);
+
+    // World size of one pixel at unit view-depth; multiply by depth later.
+    const worldPerPx = (2 * halfFovTan) / height;
+    return { origin: [...cameraPosition] as V3, dir: dir as V3, worldPerPx };
+  }
+
+  /** Resolve what a click / hover at (x, y) would pick in the current mode. */
+  private resolvePick(x: number, y: number): MeasurePick | null {
+    const mesh = this.getPickMesh();
+    const ray = this.screenRay(x, y);
+    if (!mesh || !ray) return null;
+
+    const hit = raycast(mesh, ray.origin, ray.dir);
+    if (!hit) return null;
+
+    // Convert pixel radii into world units at the hit depth.
+    const forward = this.normalize(
+      this.subtract(this.camera.target as Vec3Tuple, this.camera.position as Vec3Tuple),
+    );
+    const depth = Math.max(1e-3, this.dot(this.subtract(hit.point, ray.origin), forward));
+    const pxToWorld = ray.worldPerPx * depth;
+
+    if (this.measureMode() === 'edge') {
+      const near = nearestEdge(mesh, hit.point, EDGE_PICK_PX * pxToWorld);
+      return near ? { point: near.closest, kind: 'edge', edge: near.edge } : null;
+    }
+
+    const snapped = snapPoint(
+      mesh,
+      hit.point,
+      VERTEX_SNAP_PX * pxToWorld,
+      EDGE_SNAP_PX * pxToWorld,
+    );
+    return { point: snapped.point, kind: snapped.kind, edge: snapped.edge };
+  }
+
+  private handleMeasureClick(x: number, y: number): void {
+    const pick = this.resolvePick(x, y);
+    if (!pick) return;
+
+    if (this.measurePicks.length >= 2) {
+      this.measurePicks = [];
+      this.measureResult.set(null);
+    }
+    this.measurePicks.push(pick);
+    this.measurePickCount.set(this.measurePicks.length);
+
+    if (this.measurePicks.length === 2) {
+      const [first, second] = this.measurePicks;
+      const result =
+        this.measureMode() === 'edge' && first.edge && second.edge
+          ? edgeToEdge(first.edge, second.edge)
+          : pointToPoint(first.point, second.point);
+      this.measureResult.set(result);
+    }
+
+    this.updateMeasureOverlay();
+  }
+
+  private processPendingHover(): void {
+    if (!this.pendingHover) return;
+    const { x, y } = this.pendingHover;
+    this.pendingHover = null;
+    this.hoverPick = this.measureMode() === 'off' ? null : this.resolvePick(x, y);
+    this.updateMeasureOverlay();
+  }
+
+  private projectLine(a: V3, b: V3, container: HTMLDivElement): ScreenLine | null {
+    const pa = this.projectWorldToScreen(a, container, true);
+    const pb = this.projectWorldToScreen(b, container, true);
+    return pa && pb ? { x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1] } : null;
+  }
+
+  private updateMeasureOverlay(): void {
+    const container = this.containerRef?.nativeElement;
+    if (!container || this.measureMode() === 'off') {
+      if (this.measureOverlay() !== EMPTY_OVERLAY) {
+        this.measureOverlay.set(EMPTY_OVERLAY);
+      }
+      return;
+    }
+
+    const project = (p: V3): ScreenPoint | null => {
+      const s = this.projectWorldToScreen(p, container, true);
+      return s ? { x: s[0], y: s[1] } : null;
+    };
+
+    const markers: ScreenPoint[] = [];
+    const edges: ScreenLine[] = [];
+    const result = this.measureResult();
+
+    for (const pick of this.measurePicks) {
+      if (this.measureMode() === 'edge' && pick.edge) {
+        const line = this.projectLine(pick.edge.a, pick.edge.b, container);
+        if (line) edges.push(line);
+      }
+      if (!(this.measureMode() === 'edge' && result)) {
+        const m = project(pick.point);
+        if (m) markers.push(m);
+      }
+    }
+
+    let line: ScreenLine | null = null;
+    let label: MeasureOverlay['label'] = null;
+    if (result) {
+      line = this.projectLine(result.from, result.to, container);
+      const a = project(result.from);
+      const b = project(result.to);
+      if (a) markers.push(a);
+      if (b) markers.push(b);
+      if (line) {
+        label = {
+          x: (line.x1 + line.x2) / 2,
+          y: (line.y1 + line.y2) / 2,
+          text: `${result.distance.toFixed(2)} mm`,
+        };
+      }
+    }
+
+    let hover: MeasureOverlay['hover'] = null;
+    let hoverEdge: ScreenLine | null = null;
+    if (this.hoverPick) {
+      const h = project(this.hoverPick.point);
+      if (h) hover = { ...h, kind: this.hoverPick.kind };
+      if (this.measureMode() === 'edge' && this.hoverPick.edge) {
+        hoverEdge = this.projectLine(this.hoverPick.edge.a, this.hoverPick.edge.b, container);
+      }
+    }
+
+    this.measureOverlay.set({ hover, hoverEdge, markers, edges, line, label });
   }
 
   onWheel(event: WheelEvent): void {
@@ -533,36 +873,40 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
   }
 
   private buildPcbEntities(params: Params): Entity[] {
-    if (!params.pcbPreview.enabled) {
-      this.pcbCollision.set({
-        collides: false,
-        hitsWalls: false,
-        hitsCeiling: false,
-        overlapVolume: 0,
-      });
+    const pcbs = (params.pcbs ?? []).filter((p) => p.visible);
+    const objects = (params.internalObjects ?? []).filter((o) => o.visible);
+    if (pcbs.length === 0 && objects.length === 0) {
+      this.partCollisions.set([]);
       return [];
     }
 
-    const collision = pcbCollision(params, this.baseModelLocal ?? undefined);
-    this.pcbCollision.set(collision);
-
-    const boardColor: [number, number, number, number] = collision.collides
-      ? [0.9, 0.15, 0.15, 0.85]
-      : [0.15, 0.6, 0.28, 0.85];
-    const zoneColor: [number, number, number, number] = collision.collides
-      ? [0.9, 0.3, 0.3, 0.12]
-      : [0.2, 0.65, 0.35, 0.12];
+    const collisions = internalPartCollisions(params, this.baseModelLocal ?? undefined);
+    this.partCollisions.set(collisions);
+    const collides = (kind: PartCollision['kind'], index: number) =>
+      collisions.some((c) => c.kind === kind && c.index === index && c.collides);
 
     const entities: Entity[] = [];
+    const add = (color: [number, number, number, number], solid: Geom3) => {
+      const placed = translate(this.baseOrigin, solid);
+      entities.push(...(entitiesFromSolids({}, colorize(color, placed)) as Entity[]));
+    };
 
-    const board = translate(this.baseOrigin, pcbBoard(params));
-    entities.push(...(entitiesFromSolids({}, colorize(boardColor, board)) as Entity[]));
+    (params.pcbs ?? []).forEach((pcb, index) => {
+      if (!pcb.visible) return;
+      const hit = collides('pcb', index);
+      const { board, zone } = pcbItemSolids(params, pcb);
+      add(hit ? [0.9, 0.15, 0.15, 0.85] : [0.15, 0.6, 0.28, 0.85], board);
+      if (zone) {
+        add(hit ? [0.9, 0.3, 0.3, 0.12] : [0.2, 0.65, 0.35, 0.12], zone);
+      }
+    });
 
-    const zone = pcbComponentZone(params);
-    if (zone) {
-      const placedZone = translate(this.baseOrigin, zone);
-      entities.push(...(entitiesFromSolids({}, colorize(zoneColor, placedZone)) as Entity[]));
-    }
+    (params.internalObjects ?? []).forEach((obj, index) => {
+      if (!obj.visible) return;
+      const hit = collides('object', index);
+      const [r, g, b] = hit ? [0.9, 0.15, 0.15] : hexToRgb(obj.color);
+      add([r, g, b, 0.7], internalObjectSolid(params, obj));
+    });
 
     return entities;
   }
@@ -649,6 +993,7 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
 
   private updateAndRender = (): void => {
     this.doRotatePanZoom();
+    this.processPendingHover();
 
     if (this.updateView) {
       const updates = this.orbitControls.update({
@@ -667,6 +1012,7 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
       }
 
       this.updateSurfaceLabels();
+      this.updateMeasureOverlay();
     }
 
     this.animationFrame = requestAnimationFrame(this.updateAndRender);
@@ -798,6 +1144,7 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
   private projectWorldToScreen(
     point: Vec3Tuple,
     container: HTMLDivElement,
+    allowOffscreen = false,
   ): [number, number] | null {
     const cameraPosition = this.camera.position as Vec3Tuple;
     const cameraTarget = this.camera.target as Vec3Tuple;
@@ -835,7 +1182,7 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
       return null;
     }
 
-    if (Math.abs(ndcX) > 1.05 || Math.abs(ndcY) > 1.05) {
+    if (!allowOffscreen && (Math.abs(ndcX) > 1.05 || Math.abs(ndcY) > 1.05)) {
       return null;
     }
 
@@ -984,16 +1331,20 @@ export class RendererComponent implements AfterViewInit, OnDestroy {
 
     if (result.length === 0) {
       this.model = null;
-      this.pcbCollision.set({
-        collides: false,
-        hitsWalls: false,
-        hitsCeiling: false,
-        overlapVolume: 0,
-      });
+      this.pickMesh = null;
+      this.hoverPick = null;
+      this.clearMeasurement();
+      this.partCollisions.set([]);
       return;
     }
 
     this.model = union(result);
+    this.pickMesh = null;
+    this.hoverPick = null;
+    if (this.measurePicks.length > 0) {
+      // Geometry changed, old picks no longer refer to the current model.
+      this.clearMeasurement();
+    }
 
     const modelEntities = entitiesFromSolids({}, this.model) as Entity[];
     const modelBounds = measureBoundingBox(this.model) as [Vec3Tuple, Vec3Tuple];

@@ -36,7 +36,8 @@ describe('ToolsComponent', () => {
 
     expect(saveSpy).toHaveBeenCalledWith(
       jasmine.any(Blob),
-      jasmine.stringMatching(/^enclosure-\d+\.json$/),
+      // Saved files are named after the open project.
+      'untitled-project.json',
     );
 
     const savedBlob = saveSpy.calls.mostRecent().args[0] as Blob;

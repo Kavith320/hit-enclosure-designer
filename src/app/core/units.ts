@@ -6,6 +6,9 @@ import {
   type MeasurementSystem,
   type Params,
   type PCBMount,
+  type SketchFeature,
+  type PcbItem,
+  type InternalObject,
 } from './params';
 
 export type { MeasurementSystem };
@@ -120,6 +123,64 @@ export const convertCableClamp = (
   };
 };
 
+export const convertSketch = (
+  sketch: SketchFeature,
+  from: MeasurementSystem,
+  to: MeasurementSystem,
+): SketchFeature => {
+  if (from === to) return { ...sketch, points: sketch.points.map(([x, y]) => [x, y]) };
+  const conv = (v: number) => convertDimension(v, from, to);
+  return {
+    ...sketch,
+    x: conv(sketch.x),
+    y: conv(sketch.y),
+    width: conv(sketch.width),
+    height: conv(sketch.height),
+    cornerRadius: conv(sketch.cornerRadius),
+    diameter: conv(sketch.diameter),
+    depth: conv(sketch.depth),
+    points: (sketch.points ?? []).map(([x, y]) => [conv(x), conv(y)]),
+  };
+};
+
+export const convertPcbItem = (
+  pcb: PcbItem,
+  from: MeasurementSystem,
+  to: MeasurementSystem,
+): PcbItem => {
+  if (from === to) return { ...pcb };
+  const conv = (v: number) => convertDimension(v, from, to);
+  return {
+    ...pcb,
+    width: conv(pcb.width),
+    length: conv(pcb.length),
+    thickness: conv(pcb.thickness),
+    componentHeight: conv(pcb.componentHeight),
+    x: conv(pcb.x),
+    y: conv(pcb.y),
+    elevation: pcb.elevation == null ? pcb.elevation : conv(pcb.elevation),
+  };
+};
+
+export const convertInternalObject = (
+  obj: InternalObject,
+  from: MeasurementSystem,
+  to: MeasurementSystem,
+): InternalObject => {
+  if (from === to) return { ...obj };
+  const conv = (v: number) => convertDimension(v, from, to);
+  return {
+    ...obj,
+    width: conv(obj.width),
+    length: conv(obj.length),
+    height: conv(obj.height),
+    diameter: conv(obj.diameter),
+    x: conv(obj.x),
+    y: conv(obj.y),
+    elevation: conv(obj.elevation),
+  };
+};
+
 export const convertParams = (params: Params, targetSystem: MeasurementSystem): Params => {
   const currentSystem = params.measurementSystem ?? 'metric';
   if (currentSystem === targetSystem) {
@@ -179,6 +240,11 @@ export const convertParams = (params: Params, targetSystem: MeasurementSystem): 
     ),
     cableClamps: (params.cableClamps ?? []).map((c) =>
       convertCableClamp(c, currentSystem, targetSystem),
+    ),
+    sketches: (params.sketches ?? []).map((s) => convertSketch(s, currentSystem, targetSystem)),
+    pcbs: (params.pcbs ?? []).map((p) => convertPcbItem(p, currentSystem, targetSystem)),
+    internalObjects: (params.internalObjects ?? []).map((o) =>
+      convertInternalObject(o, currentSystem, targetSystem),
     ),
   };
 };

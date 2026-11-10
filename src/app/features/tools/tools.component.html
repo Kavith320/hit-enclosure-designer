@@ -1,13 +1,17 @@
 <div class="grid grid-cols-3 gap-2">
   <app-action-button
     variant="toolbar"
-    [title]="'Load settings from file'"
+    [title]="'Import a project file (.json) as a new project'"
     (click)="openFilePicker()"
   >
-    Load
+    Import
   </app-action-button>
-  <app-action-button variant="toolbar" [title]="'Save settings to file'" (click)="saveParamsFile()">
-    Save
+  <app-action-button
+    variant="toolbar"
+    [title]="'Download this project as a .json file'"
+    (click)="saveParamsFile()"
+  >
+    Save file
   </app-action-button>
   <app-action-button
     variant="toolbar-primary"

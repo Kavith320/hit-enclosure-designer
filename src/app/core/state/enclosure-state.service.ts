@@ -1,5 +1,11 @@
 import { Injectable, computed, signal } from '@angular/core';
-import { DEFAULT_PARAMS, type MeasurementSystem, type Params, cloneParams } from '../params';
+import {
+  DEFAULT_PARAMS,
+  type MeasurementSystem,
+  type Params,
+  blankParams,
+  cloneParams,
+} from '../params';
 import { convertParams } from '../units';
 
 @Injectable({ providedIn: 'root' })
@@ -68,24 +74,6 @@ export class EnclosureStateService {
   }
 
   resetToSimpleEnclosure(): void {
-    this.params.update((current) => ({
-      ...current,
-      holes: [],
-      pcbMounts: [],
-      internalWalls: [],
-      cableClamps: [],
-      waterProof: false,
-      wallMounts: false,
-      lidScrews: false,
-      dinRailMount: false,
-      snapFit: {
-        ...current.snapFit,
-        enabled: false,
-      },
-      pcbPreview: {
-        ...current.pcbPreview,
-        enabled: false,
-      },
-    }));
+    this.params.set(blankParams(this.params()));
   }
 }

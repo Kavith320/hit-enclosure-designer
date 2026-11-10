@@ -51,7 +51,7 @@ body {
   height: 100%;
 }
 
-button {
+button:not(.ui-plain) {
   border: 1px solid rgba(36, 79, 114, 0.22);
   border-radius: var(--radius-md);
   background-color: var(--ui-primary);
@@ -66,27 +66,41 @@ button {
     box-shadow 160ms ease;
 }
 
-button:hover:not(:disabled) {
+button:not(.ui-plain):hover:not(:disabled) {
   background-color: var(--ui-primary-hover);
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(35, 71, 104, 0.22);
 }
 
-button:active:not(:disabled) {
+button:not(.ui-plain):active:not(:disabled) {
   background-color: var(--ui-primary-active);
   transform: translateY(0);
 }
 
-button:focus-visible {
+button:not(.ui-plain):focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-button:disabled {
+button:not(.ui-plain):disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
 
 .hidden {
   display: none;
+}
+
+/* Buttons styled entirely with Tailwind utilities opt out of the global look. */
+button.ui-plain {
+  cursor: pointer;
+}
+
+button.ui-plain:disabled {
+  cursor: not-allowed;
+}
+
+button.ui-plain:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }

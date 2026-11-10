@@ -16,6 +16,61 @@ export type Hole = {
   rotation?: number;
 };
 
+export type SketchShape = 'rectangle' | 'circle' | 'polygon';
+/** `extrude` adds material, `cut` removes material. */
+export type SketchOperation = 'extrude' | 'cut';
+/** Which side of the wall/floor/roof the sketch starts from. */
+export type SketchSide = 'outside' | 'inside';
+
+/**
+ * A 2D shape drawn on an enclosure face, then extruded (added) or cut
+ * (removed) to a given depth.
+ *
+ * Face coordinates are measured from the centre of the face as seen from
+ * OUTSIDE the enclosure: +x to the right, +y up. For the Bottom face (seen
+ * from below) and the Lid (seen from above when closed) +y points towards the
+ * Front.
+ */
+export type SketchFeature = {
+  name?: string;
+  surface: Surface;
+  side: SketchSide;
+  operation: SketchOperation;
+  shape: SketchShape;
+  /** Centre of the shape on the face. */
+  x: number;
+  y: number;
+  /** Rectangle size. */
+  width: number;
+  height: number;
+  /** Rectangle corner radius. */
+  cornerRadius: number;
+  /** Circle diameter. */
+  diameter: number;
+  /** Polygon outline, relative to (x, y). */
+  points: [number, number][];
+  /** In-plane rotation in degrees (counter-clockwise). */
+  rotation: number;
+  /** Extrude height, or cut depth. */
+  depth: number;
+};
+
+export const DEFAULT_SKETCH: SketchFeature = {
+  surface: 'front',
+  side: 'outside',
+  operation: 'extrude',
+  shape: 'rectangle',
+  x: 0,
+  y: 0,
+  width: 20,
+  height: 10,
+  cornerRadius: 0,
+  diameter: 10,
+  points: [],
+  rotation: 0,
+  depth: 2,
+};
+
 export type PCBMount = {
   surface: Surface;
   x: number;
@@ -58,6 +113,80 @@ export type PCBPreview = {
   componentHeight: number;
   x: number;
   y: number;
+};
+
+/** One PCB placed inside the base (preview + collision check only). */
+export type PcbItem = {
+  name: string;
+  visible: boolean;
+  width: number;
+  length: number;
+  thickness: number;
+  componentHeight: number;
+  /** Offset of the board centre from the cavity centre. */
+  x: number;
+  y: number;
+  /**
+   * Height of the board underside above the cavity floor. When null/undefined
+   * the board rests on the tallest bottom PCB mount (or the floor).
+   */
+  elevation?: number | null;
+  /** Rotation about the vertical axis, degrees. */
+  rotation: number;
+};
+
+export type InternalObjectShape = 'box' | 'cylinder';
+
+/** A generic part inside the enclosure (battery, module, connector, ...). */
+export type InternalObject = {
+  name: string;
+  visible: boolean;
+  shape: InternalObjectShape;
+  /** Box size (X, Y, Z). */
+  width: number;
+  length: number;
+  height: number;
+  /** Cylinder diameter (height uses `height`). */
+  diameter: number;
+  /** Cylinder axis: vertical (z) or lying along x / y. */
+  axis: 'x' | 'y' | 'z';
+  /** Offset of the object centre from the cavity centre. */
+  x: number;
+  y: number;
+  /** Height of the object underside above the cavity floor. */
+  elevation: number;
+  rotation: number;
+  /** CSS hex colour for the preview. */
+  color: string;
+};
+
+export const DEFAULT_PCB: PcbItem = {
+  name: 'PCB',
+  visible: true,
+  width: 50,
+  length: 40,
+  thickness: 1.6,
+  componentHeight: 8,
+  x: 0,
+  y: 0,
+  elevation: null,
+  rotation: 0,
+};
+
+export const DEFAULT_INTERNAL_OBJECT: InternalObject = {
+  name: 'Object',
+  visible: true,
+  shape: 'box',
+  width: 20,
+  length: 15,
+  height: 10,
+  diameter: 18,
+  axis: 'z',
+  x: 0,
+  y: 0,
+  elevation: 0,
+  rotation: 0,
+  color: '#f59e0b',
 };
 
 export type CableClamp = {
@@ -116,6 +245,9 @@ export type Params = {
   pcbMounts: PCBMount[];
   internalWalls: InternalWall[];
   cableClamps: CableClamp[];
+  sketches?: SketchFeature[];
+  pcbs?: PcbItem[];
+  internalObjects?: InternalObject[];
   wallMounts: boolean;
   wallMountCount: number;
   wallMountScrewDiameter: number;
@@ -216,6 +348,9 @@ export const DEFAULT_PARAMS: Params = {
       y: 0,
     },
   ],
+  sketches: [],
+  pcbs: [],
+  internalObjects: [],
   pcbMounts: [
     {
       surface: 'bottom',
@@ -309,3 +444,65 @@ export const DEFAULT_PARAMS: Params = {
 export const cloneParams = (params: Params): Params => {
   return JSON.parse(JSON.stringify(params)) as Params;
 };
+
+/**
+ * Merge a (possibly partial / older) saved params object onto a base set of
+ * params, keeping nested objects complete so new fields get sane defaults.
+ */
+export const mergeParams = (current: Params, data: Partial<Params>): Params => {
+  return cloneParams({
+    ...current,
+    ...data,
+    measurementSystem: data.measurementSystem ?? 'metric',
+    snapFit: {
+      ...current.snapFit,
+      ...(data.snapFit ?? {}),
+    },
+    cableClamps: data.cableClamps ?? current.cableClamps ?? [],
+    sketches: (data.sketches ?? current.sketches ?? []).map((sketch) => ({
+      ...DEFAULT_SKETCH,
+      ...sketch,
+    })),
+    pcbs: (data.pcbs ?? legacyPcbs(data) ?? current.pcbs ?? []).map((pcb) => ({
+      ...DEFAULT_PCB,
+      ...pcb,
+    })),
+    internalObjects: (data.internalObjects ?? current.internalObjects ?? []).map((obj) => ({
+      ...DEFAULT_INTERNAL_OBJECT,
+      ...obj,
+    })),
+    pcbPreview: {
+      ...current.pcbPreview,
+      ...(data.pcbPreview ?? {}),
+    },
+  });
+};
+
+/**
+ * Older project files only had a single `pcbPreview`. Turn an enabled one into
+ * the first entry of the `pcbs` list.
+ */
+const legacyPcbs = (data: Partial<Params>): PcbItem[] | undefined => {
+  if (data.pcbs || !data.pcbPreview) return undefined;
+  if (!data.pcbPreview.enabled) return [];
+  const { width, length, thickness, componentHeight, x, y } = data.pcbPreview;
+  return [{ ...DEFAULT_PCB, name: 'PCB 1', width, length, thickness, componentHeight, x, y }];
+};
+
+/** A plain box: same size/units as `params`, with every add-on removed. */
+export const blankParams = (params: Params): Params => ({
+  ...cloneParams(params),
+  holes: [],
+  pcbMounts: [],
+  internalWalls: [],
+  cableClamps: [],
+  sketches: [],
+  pcbs: [],
+  internalObjects: [],
+  waterProof: false,
+  wallMounts: false,
+  lidScrews: false,
+  dinRailMount: false,
+  snapFit: { ...params.snapFit, enabled: false },
+  pcbPreview: { ...params.pcbPreview, enabled: false },
+});

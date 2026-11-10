@@ -26,49 +26,51 @@ describe('ParamsFormComponent', () => {
     expect(component.activeTab()).toBeNull();
   });
 
-  it('resets to simple enclosure and opens general tab', () => {
-    component.setActiveTab(6);
-    component.resetToSimpleEnclosure();
-
-    expect(component.activeTab()).toBe(1);
-    expect(state.params().holes.length).toBe(0);
-    expect(state.params().pcbMounts.length).toBe(0);
-    expect(state.params().internalWalls.length).toBe(0);
-    expect(state.params().cableClamps.length).toBe(0);
-    expect(state.params().waterProof).toBeFalse();
-    expect(state.params().lidScrews).toBeFalse();
-    expect(state.params().snapFit.enabled).toBeFalse();
-    expect(state.params().pcbPreview.enabled).toBeFalse();
+  it('no longer has a destructive "start from scratch" button', () => {
+    const fixture = TestBed.createComponent(ParamsFormComponent);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.simple-reset-btn')).toBeNull();
   });
 
-  it('updates PCB preview settings', () => {
-    component.setPcbPreviewEnabled(true);
-    expect(state.params().pcbPreview.enabled).toBeTrue();
+  it('supports multiple PCBs (add, update, duplicate, remove)', () => {
+    expect(component.pcbs().length).toBe(0);
+    component.addPcb();
+    component.addPcb();
+    expect(component.pcbs().map((p) => p.name)).toEqual(['PCB 1', 'PCB 2']);
 
-    component.setPcbPreviewNumber('width', '72.5');
-    expect(state.params().pcbPreview.width).toBe(72.5);
+    component.updatePcb(1, { width: 72.5, x: 5 });
+    expect(state.params().pcbs![1].width).toBe(72.5);
+    expect(state.params().pcbs![1].x).toBe(5);
 
-    component.setPcbPreviewNumber('length', '48.2');
-    expect(state.params().pcbPreview.length).toBe(48.2);
+    component.setPcbElevation(0, '3');
+    expect(state.params().pcbs![0].elevation).toBe(3);
+    component.setPcbElevation(0, '');
+    expect(state.params().pcbs![0].elevation).toBeNull();
 
-    component.setPcbPreviewNumber('thickness', '2.0');
-    expect(state.params().pcbPreview.thickness).toBe(2.0);
+    component.duplicatePcb(1);
+    expect(component.pcbs().length).toBe(3);
+    expect(component.pcbs()[2].name).toBe('PCB 2 copy');
+    expect(component.pcbs()[2].width).toBe(72.5);
 
-    component.setPcbPreviewNumber('componentHeight', '12');
-    expect(state.params().pcbPreview.componentHeight).toBe(12);
+    component.removePcb(0);
+    expect(component.pcbs().map((p) => p.name)).toEqual(['PCB 2', 'PCB 2 copy']);
+  });
 
-    component.setPcbPreviewNumber('x', '5');
-    expect(state.params().pcbPreview.x).toBe(5);
+  it('supports internal objects (add, update, duplicate, remove)', () => {
+    component.addInternalObject();
+    expect(component.internalObjects().length).toBe(1);
+    expect(component.internalObjects()[0].name).toBe('Object 1');
 
-    component.setPcbPreviewNumber('y', '-3.5');
-    expect(state.params().pcbPreview.y).toBe(-3.5);
+    component.updateInternalObject(0, { shape: 'cylinder', diameter: 18, height: 65, axis: 'x' });
+    expect(state.params().internalObjects![0].shape).toBe('cylinder');
+    expect(state.params().internalObjects![0].axis).toBe('x');
 
-    // Invalid numbers or empty string should be ignored
-    component.setPcbPreviewNumber('width', '');
-    expect(state.params().pcbPreview.width).toBe(72.5);
+    component.duplicateInternalObject(0);
+    expect(component.internalObjects().length).toBe(2);
 
-    component.setPcbPreviewNumber('width', 'invalid');
-    expect(state.params().pcbPreview.width).toBe(72.5);
+    component.removeInternalObject(0);
+    expect(component.internalObjects().length).toBe(1);
+    expect(component.internalObjects()[0].name).toBe('Object 1 copy');
   });
 
   it('supports dynamic cable clamp CRUD operations', () => {

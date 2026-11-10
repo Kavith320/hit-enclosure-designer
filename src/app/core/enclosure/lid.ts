@@ -13,6 +13,7 @@ import { getScrewOffset, lidScrewRecesses, screws } from './screws';
 import { subtract } from '@jscad/modeling/src/operations/booleans';
 import { holes } from './holes';
 import { lidSnapBumps } from './snapfit';
+import { LID_SKETCH_SURFACES, sketchFeatures } from './sketch';
 
 const { union } = booleans;
 const { translate } = transforms;
@@ -81,6 +82,14 @@ export const lid = (params: Params) => {
 
   if (holeCount > 0) {
     subtracts.push(holes(params, ['top']));
+  }
+
+  const sketches = sketchFeatures(params, LID_SKETCH_SURFACES);
+  if (sketches.adds) {
+    entities.push(sketches.adds);
+  }
+  if (sketches.cuts) {
+    subtracts.push(sketches.cuts);
   }
 
   const bumps = lidSnapBumps(params);

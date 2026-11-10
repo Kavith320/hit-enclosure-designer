@@ -12,20 +12,218 @@
     }
   </div>
 
-  @if (pcbCollision().collides) {
+  @if (collidingParts().length > 0) {
     <div
-      class="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-lg border border-red-300 bg-red-600/90 px-4 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(127,29,29,0.45)]"
+      class="pointer-events-none absolute left-1/2 top-4 z-10 max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border border-red-300 bg-red-600/90 px-4 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(127,29,29,0.45)]"
     >
-      ⚠ PCB Collision:
-      @if (pcbCollision().hitsWalls) {
-        <span>Collides with enclosure walls / partitions ({{ pcbCollision().overlapVolume }} mm³)</span>
+      ⚠ Collision
+      <ul class="mt-1 space-y-0.5 text-xs font-medium">
+        @for (part of collidingParts(); track part.kind + part.index) {
+          <li>
+            <b>{{ part.name }}</b
+            >:
+            @if (part.hitsWalls) {
+              <span>hits walls / partitions ({{ part.wallOverlapVolume }} mm³)</span>
+            }
+            @if (part.hitsCeiling) {
+              <span>{{ part.hitsWalls ? ' · ' : '' }}taller than the enclosure</span>
+            }
+            @if (part.overlaps.length > 0) {
+              <span
+                >{{ part.hitsWalls || part.hitsCeiling ? ' · ' : '' }}overlaps
+                {{ part.overlaps.join(', ') }}</span
+              >
+            }
+          </li>
+        }
+      </ul>
+    </div>
+  }
+</div>
+
+<!-- Ruler / measurement tool -->
+@if (measureMode() !== 'off') {
+  @let overlay = measureOverlay();
+  <svg
+    class="pointer-events-none absolute inset-0 z-[5] h-full w-full overflow-visible select-none"
+    aria-hidden="true"
+  >
+    @if (overlay.hoverEdge) {
+      <line
+        [attr.x1]="overlay.hoverEdge.x1"
+        [attr.y1]="overlay.hoverEdge.y1"
+        [attr.x2]="overlay.hoverEdge.x2"
+        [attr.y2]="overlay.hoverEdge.y2"
+        stroke="#f59e0b"
+        stroke-width="4"
+        stroke-linecap="round"
+        opacity="0.75"
+      />
+    }
+    @for (edge of overlay.edges; track $index) {
+      <line
+        [attr.x1]="edge.x1"
+        [attr.y1]="edge.y1"
+        [attr.x2]="edge.x2"
+        [attr.y2]="edge.y2"
+        stroke="#0284c7"
+        stroke-width="4"
+        stroke-linecap="round"
+      />
+    }
+    @if (overlay.line) {
+      <line
+        [attr.x1]="overlay.line.x1"
+        [attr.y1]="overlay.line.y1"
+        [attr.x2]="overlay.line.x2"
+        [attr.y2]="overlay.line.y2"
+        stroke="#ffffff"
+        stroke-width="5"
+        stroke-linecap="round"
+      />
+      <line
+        [attr.x1]="overlay.line.x1"
+        [attr.y1]="overlay.line.y1"
+        [attr.x2]="overlay.line.x2"
+        [attr.y2]="overlay.line.y2"
+        stroke="#e11d48"
+        stroke-width="2"
+        stroke-dasharray="6 4"
+        stroke-linecap="round"
+      />
+    }
+    @for (marker of overlay.markers; track $index) {
+      <circle
+        [attr.cx]="marker.x"
+        [attr.cy]="marker.y"
+        r="5"
+        fill="#e11d48"
+        stroke="#ffffff"
+        stroke-width="2"
+      />
+    }
+    @if (overlay.hover) {
+      @if (overlay.hover.kind === 'vertex') {
+        <rect
+          [attr.x]="overlay.hover.x - 6"
+          [attr.y]="overlay.hover.y - 6"
+          width="12"
+          height="12"
+          fill="none"
+          stroke="#16a34a"
+          stroke-width="2.5"
+        />
+      } @else if (overlay.hover.kind === 'edge') {
+        <circle
+          [attr.cx]="overlay.hover.x"
+          [attr.cy]="overlay.hover.y"
+          r="6"
+          fill="none"
+          stroke="#f59e0b"
+          stroke-width="2.5"
+        />
+      } @else {
+        <circle
+          [attr.cx]="overlay.hover.x"
+          [attr.cy]="overlay.hover.y"
+          r="4"
+          fill="#0f172a"
+          stroke="#ffffff"
+          stroke-width="1.5"
+        />
       }
-      @if (pcbCollision().hitsWalls && pcbCollision().hitsCeiling) {
-        <span> · </span>
+    }
+  </svg>
+
+  @if (overlay.label) {
+    <div
+      class="pointer-events-none absolute z-[6] rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white shadow-[0_4px_12px_rgba(15,23,42,0.35)]"
+      [style.left.px]="overlay.label.x"
+      [style.top.px]="overlay.label.y"
+      style="transform: translate(-50%, -140%)"
+    >
+      {{ overlay.label.text }}
+    </div>
+  }
+}
+
+<div
+  class="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2"
+  (pointerdown)="$event.stopPropagation()"
+  (pointerup)="$event.stopPropagation()"
+  (pointermove)="$event.stopPropagation()"
+>
+  <div
+    class="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/90 p-1 text-xs font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.15)] backdrop-blur"
+  >
+    <button
+      type="button"
+      class="ui-plain rounded-lg px-2.5 py-1.5 transition"
+      [class.bg-sky-600]="measureMode() !== 'off'"
+      [class.text-white]="measureMode() !== 'off'"
+      [class.hover:bg-slate-100]="measureMode() === 'off'"
+      [attr.aria-pressed]="measureMode() !== 'off'"
+      title="Ruler: measure distances in mm"
+      (click)="toggleMeasure()"
+    >
+      📏 Measure
+    </button>
+    @if (measureMode() !== 'off') {
+      <span class="mx-0.5 h-5 w-px bg-slate-200"></span>
+      <button
+        type="button"
+        class="ui-plain rounded-lg px-2.5 py-1.5 transition"
+        [class.bg-slate-800]="measureMode() === 'point'"
+        [class.text-white]="measureMode() === 'point'"
+        [class.hover:bg-slate-100]="measureMode() !== 'point'"
+        title="Point to point (snaps to corners and edges)"
+        (click)="setMeasureMode('point')"
+      >
+        Point
+      </button>
+      <button
+        type="button"
+        class="ui-plain rounded-lg px-2.5 py-1.5 transition"
+        [class.bg-slate-800]="measureMode() === 'edge'"
+        [class.text-white]="measureMode() === 'edge'"
+        [class.hover:bg-slate-100]="measureMode() !== 'edge'"
+        title="Edge to edge (shortest distance between two edges)"
+        (click)="setMeasureMode('edge')"
+      >
+        Edge
+      </button>
+      <button
+        type="button"
+        class="ui-plain rounded-lg px-2.5 py-1.5 transition hover:bg-slate-100"
+        title="Clear measurement (Esc)"
+        (click)="clearMeasurement()"
+      >
+        Clear
+      </button>
+    }
+  </div>
+
+  @if (measureMode() !== 'off') {
+    <div
+      class="rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.15)] backdrop-blur"
+    >
+      @if (measureResult(); as result) {
+        <div class="text-sm font-bold text-slate-900">
+          {{ formatLength(result.distance) }}
+          @if (result.parallel) {
+            <span class="ml-1 text-[10px] font-semibold uppercase text-slate-500">parallel</span>
+          }
+        </div>
+        <div class="mt-1 grid grid-cols-[auto_1fr] gap-x-2 tabular-nums">
+          <span class="font-semibold text-rose-600">ΔX</span
+          ><span>{{ formatLength(result.dx) }}</span>
+          <span class="font-semibold text-emerald-600">ΔY</span
+          ><span>{{ formatLength(result.dy) }}</span>
+          <span class="font-semibold text-sky-600">ΔZ</span
+          ><span>{{ formatLength(result.dz) }}</span>
+        </div>
       }
-      @if (pcbCollision().hitsCeiling) {
-        <span>Components exceed ceiling height</span>
-      }
+      <div class="text-slate-500" [class.mt-1]="measureResult()">{{ measureHint() }}</div>
     </div>
   }
 </div>

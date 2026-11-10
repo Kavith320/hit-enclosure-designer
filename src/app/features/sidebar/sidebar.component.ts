@@ -1,14 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { APP_VERSION } from '../../app-version';
 import { EnclosureStateService } from '../../core/state/enclosure-state.service';
-import { FundingComponent } from '../../shared/funding/funding.component';
 import { ParamsFormComponent } from '../params/params-form.component';
+import { ProjectsComponent } from '../projects/projects.component';
 import { ToolsComponent } from '../tools/tools.component';
 
 @Component({
   selector: 'app-sidebar',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ToolsComponent, ParamsFormComponent, FundingComponent],
+  imports: [ProjectsComponent, ToolsComponent, ParamsFormComponent],
   host: {
     class: 'block h-full min-h-0',
   },

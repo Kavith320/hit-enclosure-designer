@@ -27,6 +27,8 @@ import {
 import { ExportFormatService } from '../../core/export/export-format.service';
 import type { Params } from '../../core/params';
 import { EnclosureStateService } from '../../core/state/enclosure-state.service';
+import { ProjectStoreService } from '../../core/state/project-store.service';
+import { projectFileName } from '../projects/projects.component';
 import { toMetricParams } from '../../core/units';
 import { ActionButtonComponent } from '../../shared/action-button/action-button.component';
 
@@ -47,6 +49,7 @@ export class ToolsComponent {
 
   private readonly state = inject(EnclosureStateService);
   private readonly exportFormatService = inject(ExportFormatService);
+  private readonly projects = inject(ProjectStoreService);
 
   readonly supportedFormats = this.exportFormatService.formats;
   readonly isExportModalOpen = signal(false);
@@ -149,10 +152,13 @@ export class ToolsComponent {
   }
 
   saveParamsFile(): void {
-    const tsStr = this.formattedTimestamp();
     const data = JSON.stringify(this.state.params(), null, 2);
-    const textFile = new Blob([data], { type: 'text/plain' });
-    this.saveFile(textFile, `enclosure-${tsStr}.json`);
+    const textFile = new Blob([data], { type: 'application/json' });
+    const name = this.projects.current()?.name;
+    this.saveFile(
+      textFile,
+      name ? projectFileName(name) : `enclosure-${this.formattedTimestamp()}.json`,
+    );
   }
 
   loadParamsFile(event: Event): void {
@@ -161,27 +167,19 @@ export class ToolsComponent {
       return;
     }
 
+    const file = input.files[0];
     const fileReader = new FileReader();
     fileReader.onload = () => {
-      const data = JSON.parse(fileReader.result as string) as Partial<Params>;
-      const current = this.state.params();
-      const merged: Params = {
-        ...current,
-        ...data,
-        measurementSystem: data.measurementSystem ?? 'metric',
-        snapFit: {
-          ...current.snapFit,
-          ...(data.snapFit ?? {}),
-        },
-        cableClamps: data.cableClamps ?? current.cableClamps ?? [],
-        pcbPreview: {
-          ...current.pcbPreview,
-          ...(data.pcbPreview ?? {}),
-        },
-      };
-      this.state.setParams(merged);
+      try {
+        const data = JSON.parse(fileReader.result as string) as Partial<Params>;
+        // Imported files become a new project; the open one stays untouched.
+        const name = file.name.replace(/\.json$/i, '') || 'Imported project';
+        this.projects.importProject(name, data);
+      } catch {
+        alert('This file is not a valid enclosure project (.json).');
+      }
     };
-    fileReader.readAsText(input.files[0], 'UTF-8');
+    fileReader.readAsText(file, 'UTF-8');
 
     input.value = '';
   }

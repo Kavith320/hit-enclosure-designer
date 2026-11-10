@@ -1,8 +1,4 @@
 <form id="param-form" (submit)="$event.preventDefault()">
-  <button type="button" class="simple-reset-btn" (click)="resetToSimpleEnclosure()">
-    START FROM SCRATCH
-  </button>
-
   <div class="accordian" [class.active]="activeTab() === 1">
     <p class="accordian-header" (click)="setActiveTab(1)">
       General
@@ -657,6 +653,61 @@
     </div>
   </div>
 
+  <div class="accordian" [class.active]="activeTab() === 12">
+    <p class="accordian-header" (click)="setActiveTab(12)">
+      Sketch &amp; Extrude
+      <span class="accordian-icon">{{ activeTab() === 12 ? '-' : '+' }}</span>
+    </p>
+    <div class="accordian-body">
+      <p class="sketch-help">
+        Draw any shape on a face, then extrude it (add material) or cut it (remove material).
+      </p>
+      @for (sketch of sketches(); track $index) {
+        <div class="sub-params">
+          <button class="remove-btn" type="button" (click)="removeSketch($index)">X</button>
+          <p>
+            <b>{{ sketch.name || 'Sketch ' + ($index + 1) }}</b>
+          </p>
+          <p class="sketch-summary">{{ sketchSummary(sketch) }}</p>
+
+          <div class="input-group">
+            <label>Operation</label>
+            <select (change)="updateSketch($index, { operation: $any($event.target).value })">
+              <option value="extrude" [selected]="sketch.operation === 'extrude'">
+                Extrude (add)
+              </option>
+              <option value="cut" [selected]="sketch.operation === 'cut'">Cut (remove)</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label> {{ sketch.operation === 'cut' ? 'Depth' : 'Height' }} ({{ unit() }}) </label>
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              [placeholder]="unit()"
+              [value]="sketch.depth"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateSketch($index, { depth: +$any($event.target).value })"
+            />
+          </div>
+
+          <div class="sketch-actions">
+            <button class="add-btn" type="button" (click)="editSketch($index)">
+              ✎ Draw / edit
+            </button>
+            <button class="add-btn" type="button" (click)="duplicateSketch($index)">
+              Duplicate
+            </button>
+          </div>
+        </div>
+      }
+
+      <button class="add-btn" type="button" (click)="newSketch()">✎ Draw new shape</button>
+    </div>
+  </div>
+
   <div class="accordian" [class.active]="activeTab() === 4">
     <p class="accordian-header" (click)="setActiveTab(4)">
       PCB Mounts
@@ -777,228 +828,278 @@
 
   <div class="accordian" [class.active]="activeTab() === 5">
     <p class="accordian-header" (click)="setActiveTab(5)">
-      PCB Preview
+      PCBs ({{ pcbs().length }})
       <span class="accordian-icon">{{ activeTab() === 5 ? '-' : '+' }}</span>
     </p>
     <div class="accordian-body">
-      <div class="input-group checkbox-group input-group-full">
-        <label>
-          Enable PCB Preview
-          <span class="help-tip" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Simulates PCB in 3D viewport. Green = clearance, red = collision with enclosure</span
-            >
-          </span>
-        </label>
-        <input
-          type="checkbox"
-          [checked]="params().pcbPreview.enabled"
-          (change)="setPcbPreviewEnabled($any($event.target).checked)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Width ({{ unit() }})
-          <span class="help-tip" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Board dimension along X (left/right, {{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          min="0.01"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.width"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('width', $any($event.target).value)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Length ({{ unit() }})
-          <span class="help-tip help-tip-right" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Board dimension along Y (front/back, {{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          min="0.01"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.length"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('length', $any($event.target).value)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Thickness ({{ unit() }})
-          <span class="help-tip" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Thickness of the PCB board ({{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          min="0.01"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.thickness"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('thickness', $any($event.target).value)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Component Height ({{ unit() }})
-          <span class="help-tip help-tip-right" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Height of components above the board ({{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          min="0"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.componentHeight"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('componentHeight', $any($event.target).value)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Offset X ({{ unit() }})
-          <span class="help-tip" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Offset from enclosure center along X ({{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.x"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('x', $any($event.target).value)"
-        />
-      </div>
-      <div class="input-group">
-        <label>
-          Offset Y ({{ unit() }})
-          <span class="help-tip help-tip-right" tabindex="0">
-            <svg
-              class="help-icon"
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="8" r="6.75" />
-              <path d="M8 7v4.5M8 4.75v.5" stroke-linecap="round" />
-            </svg>
-            <span class="help-tooltip" role="tooltip"
-              >Offset from enclosure center along Y ({{ unit() }})</span
-            >
-          </span>
-        </label>
-        <input
-          type="number"
-          step="any"
-          [placeholder]="unit()"
-          [value]="params().pcbPreview.y"
-          (keydown.enter)="$any($event.target).blur()"
-          (blur)="setPcbPreviewNumber('y', $any($event.target).value)"
-        />
-      </div>
+      <p class="sketch-help">
+        Place one or more boards inside the base. Green = fits, red = collision. Positions are
+        offsets from the centre of the cavity.
+      </p>
+      @for (pcb of pcbs(); track $index) {
+        <div class="sub-params">
+          <button class="remove-btn" type="button" (click)="removePcb($index)">X</button>
+          <div class="input-group input-group-full">
+            <label>Name</label>
+            <input
+              type="text"
+              [value]="pcb.name"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { name: $any($event.target).value })"
+            />
+          </div>
+          <div class="input-group checkbox-group">
+            <label>Visible</label>
+            <input
+              type="checkbox"
+              [checked]="pcb.visible"
+              (change)="updatePcb($index, { visible: $any($event.target).checked })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Width ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              [value]="pcb.width"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { width: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Length ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              [value]="pcb.length"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { length: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Thickness ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              [value]="pcb.thickness"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { thickness: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Component Height ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              [value]="pcb.componentHeight"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { componentHeight: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Offset X ({{ unit() }})</label>
+            <input
+              type="number"
+              step="any"
+              [value]="pcb.x"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { x: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Offset Y ({{ unit() }})</label>
+            <input
+              type="number"
+              step="any"
+              [value]="pcb.y"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { y: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Rotation (°)</label>
+            <input
+              type="number"
+              step="any"
+              [value]="pcb.rotation"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updatePcb($index, { rotation: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Elevation ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              placeholder="on mounts"
+              [value]="pcb.elevation ?? ''"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="setPcbElevation($index, $any($event.target).value)"
+            />
+          </div>
+          <div class="sketch-actions">
+            <button class="add-btn" type="button" (click)="duplicatePcb($index)">Duplicate</button>
+          </div>
+        </div>
+      }
+      <button class="add-btn" type="button" (click)="addPcb()">Add PCB</button>
+    </div>
+  </div>
+
+  <div class="accordian" [class.active]="activeTab() === 13">
+    <p class="accordian-header" (click)="setActiveTab(13)">
+      Internal Objects ({{ internalObjects().length }})
+      <span class="accordian-icon">{{ activeTab() === 13 ? '-' : '+' }}</span>
+    </p>
+    <div class="accordian-body">
+      <p class="sketch-help">
+        Batteries, modules, connectors… anything that must fit inside. Elevation is measured from
+        the cavity floor.
+      </p>
+      @for (obj of internalObjects(); track $index) {
+        <div class="sub-params">
+          <button class="remove-btn" type="button" (click)="removeInternalObject($index)">X</button>
+          <div class="input-group input-group-full">
+            <label>Name</label>
+            <input
+              type="text"
+              [value]="obj.name"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { name: $any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Shape</label>
+            <select (change)="updateInternalObject($index, { shape: $any($event.target).value })">
+              <option value="box" [selected]="obj.shape === 'box'">Box</option>
+              <option value="cylinder" [selected]="obj.shape === 'cylinder'">Cylinder</option>
+            </select>
+          </div>
+          <div class="input-group checkbox-group">
+            <label>Visible</label>
+            <input
+              type="checkbox"
+              [checked]="obj.visible"
+              (change)="updateInternalObject($index, { visible: $any($event.target).checked })"
+            />
+          </div>
+          @if (obj.shape === 'box') {
+            <div class="input-group">
+              <label>Width X ({{ unit() }})</label>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                [value]="obj.width"
+                (keydown.enter)="$any($event.target).blur()"
+                (blur)="updateInternalObject($index, { width: +$any($event.target).value })"
+              />
+            </div>
+            <div class="input-group">
+              <label>Length Y ({{ unit() }})</label>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                [value]="obj.length"
+                (keydown.enter)="$any($event.target).blur()"
+                (blur)="updateInternalObject($index, { length: +$any($event.target).value })"
+              />
+            </div>
+          } @else {
+            <div class="input-group">
+              <label>Diameter ({{ unit() }})</label>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                [value]="obj.diameter"
+                (keydown.enter)="$any($event.target).blur()"
+                (blur)="updateInternalObject($index, { diameter: +$any($event.target).value })"
+              />
+            </div>
+            <div class="input-group">
+              <label>Axis</label>
+              <select (change)="updateInternalObject($index, { axis: $any($event.target).value })">
+                <option value="z" [selected]="obj.axis === 'z'">Standing (Z)</option>
+                <option value="x" [selected]="obj.axis === 'x'">Lying along X</option>
+                <option value="y" [selected]="obj.axis === 'y'">Lying along Y</option>
+              </select>
+            </div>
+          }
+          <div class="input-group">
+            <label>{{ obj.shape === 'box' ? 'Height Z' : 'Length' }} ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0.01"
+              step="any"
+              [value]="obj.height"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { height: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Offset X ({{ unit() }})</label>
+            <input
+              type="number"
+              step="any"
+              [value]="obj.x"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { x: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Offset Y ({{ unit() }})</label>
+            <input
+              type="number"
+              step="any"
+              [value]="obj.y"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { y: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Elevation ({{ unit() }})</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              [value]="obj.elevation"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { elevation: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Rotation (°)</label>
+            <input
+              type="number"
+              step="any"
+              [value]="obj.rotation"
+              (keydown.enter)="$any($event.target).blur()"
+              (blur)="updateInternalObject($index, { rotation: +$any($event.target).value })"
+            />
+          </div>
+          <div class="input-group">
+            <label>Colour</label>
+            <input
+              type="color"
+              [value]="obj.color"
+              (change)="updateInternalObject($index, { color: $any($event.target).value })"
+            />
+          </div>
+          <div class="sketch-actions">
+            <button class="add-btn" type="button" (click)="duplicateInternalObject($index)">
+              Duplicate
+            </button>
+          </div>
+        </div>
+      }
+      <button class="add-btn" type="button" (click)="addInternalObject()">Add Object</button>
     </div>
   </div>
 
@@ -1492,3 +1593,13 @@
     </div>
   </div>
 </form>
+
+@if (editingSketch(); as editing) {
+  <app-sketch-editor
+    [params]="params()"
+    [sketch]="editing.sketch"
+    [index]="editing.index"
+    (saved)="onSketchSaved($event)"
+    (cancelled)="editingSketch.set(null)"
+  />
+}

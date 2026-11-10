@@ -366,3 +366,25 @@ select:focus-visible {
     transform: translateY(0);
   }
 }
+
+.sketch-help {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: rgb(100 116 139);
+}
+
+.sketch-summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.7rem;
+  color: rgb(71 85 105);
+}
+
+.sketch-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sketch-actions .add-btn {
+  flex: 1;
+  margin-top: 0.25rem;
+}

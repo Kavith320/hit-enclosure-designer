@@ -8,6 +8,7 @@ import { bottomChamferTool } from './chamfer';
 import { waterProofSealCutout } from './waterproofseal';
 import { getScrewOffset, nutPockets, screws } from './screws';
 import { baseSnapPockets } from './snapfit';
+import { BASE_SKETCH_SURFACES, sketchFeatures } from './sketch';
 import { translate } from '@jscad/modeling/src/operations/transforms';
 
 const { subtract, union } = booleans;
@@ -75,6 +76,14 @@ export const base = (params: Params) => {
 
   if (holeCount > 0) {
     subtracts.push(holes(params));
+  }
+
+  const sketches = sketchFeatures(params, BASE_SKETCH_SURFACES);
+  if (sketches.adds) {
+    body.push(sketches.adds);
+  }
+  if (sketches.cuts) {
+    subtracts.push(sketches.cuts);
   }
 
   const snapPockets = baseSnapPockets(params);

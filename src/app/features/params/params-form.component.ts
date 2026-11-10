@@ -3,22 +3,31 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import type {
   CableClamp,
   Hole,
+  InternalObject,
   InternalWall,
+  PcbItem,
   MeasurementSystem,
   PCBMount,
   Params,
-  PCBPreview,
+  SketchFeature,
   SnapFit,
 } from '../../core/params';
-import { DEFAULT_CABLE_CLAMP } from '../../core/params';
+import {
+  DEFAULT_CABLE_CLAMP,
+  DEFAULT_INTERNAL_OBJECT,
+  DEFAULT_PCB,
+  DEFAULT_SKETCH,
+} from '../../core/params';
 import { EnclosureStateService } from '../../core/state/enclosure-state.service';
-import { mmToInches } from '../../core/units';
+import { convertInternalObject, convertPcbItem, convertSketch, mmToInches } from '../../core/units';
+import { SketchEditorComponent } from '../sketch/sketch-editor.component';
 
 type Surface = 'top' | 'bottom' | 'left' | 'right' | 'front' | 'back';
 
 @Component({
   selector: 'app-params-form',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [SketchEditorComponent],
   templateUrl: './params-form.component.html',
   styleUrl: './params-form.component.css',
 })
@@ -26,6 +35,9 @@ export class ParamsFormComponent {
   private readonly state = inject(EnclosureStateService);
 
   readonly activeTab = signal<number | null>(null);
+
+  /** Sketch currently open in the sketch editor (index -1 = new). */
+  readonly editingSketch = signal<{ index: number; sketch: SketchFeature } | null>(null);
 
   readonly surfaces: Surface[] = ['front', 'right', 'back', 'left', 'top', 'bottom'];
 
@@ -58,11 +70,6 @@ export class ParamsFormComponent {
 
   setActiveTab(tab: number): void {
     this.activeTab.set(this.activeTab() === tab ? null : tab);
-  }
-
-  resetToSimpleEnclosure(): void {
-    this.state.resetToSimpleEnclosure();
-    this.activeTab.set(1);
   }
 
   setNumberParam<K extends keyof Params>(key: K, rawValue: string): void {
@@ -215,6 +222,148 @@ export class ParamsFormComponent {
     });
   }
 
+  // ---- PCBs ---------------------------------------------------------------
+
+  pcbs(): PcbItem[] {
+    return this.params().pcbs ?? [];
+  }
+
+  addPcb(): void {
+    const base = this.isImperial()
+      ? convertPcbItem(DEFAULT_PCB, 'metric', 'imperial')
+      : { ...DEFAULT_PCB };
+    const list = this.pcbs();
+    this.state.patchParams({ pcbs: [...list, { ...base, name: `PCB ${list.length + 1}` }] });
+  }
+
+  updatePcb(index: number, patch: Partial<PcbItem>): void {
+    this.state.patchParams({
+      pcbs: this.pcbs().map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    });
+  }
+
+  setPcbElevation(index: number, raw: string): void {
+    const value = parseFloat(raw);
+    this.updatePcb(index, { elevation: raw.trim() === '' || Number.isNaN(value) ? null : value });
+  }
+
+  duplicatePcb(index: number): void {
+    const list = [...this.pcbs()];
+    const item = list[index];
+    if (!item) return;
+    list.splice(index + 1, 0, { ...item, name: `${item.name} copy` });
+    this.state.patchParams({ pcbs: list });
+  }
+
+  removePcb(index: number): void {
+    this.state.patchParams({ pcbs: this.pcbs().filter((_, i) => i !== index) });
+  }
+
+  // ---- Internal objects ---------------------------------------------------
+
+  internalObjects(): InternalObject[] {
+    return this.params().internalObjects ?? [];
+  }
+
+  addInternalObject(): void {
+    const base = this.isImperial()
+      ? convertInternalObject(DEFAULT_INTERNAL_OBJECT, 'metric', 'imperial')
+      : { ...DEFAULT_INTERNAL_OBJECT };
+    const list = this.internalObjects();
+    this.state.patchParams({
+      internalObjects: [...list, { ...base, name: `Object ${list.length + 1}` }],
+    });
+  }
+
+  updateInternalObject(index: number, patch: Partial<InternalObject>): void {
+    this.state.patchParams({
+      internalObjects: this.internalObjects().map((item, i) =>
+        i === index ? { ...item, ...patch } : item,
+      ),
+    });
+  }
+
+  duplicateInternalObject(index: number): void {
+    const list = [...this.internalObjects()];
+    const item = list[index];
+    if (!item) return;
+    list.splice(index + 1, 0, { ...item, name: `${item.name} copy` });
+    this.state.patchParams({ internalObjects: list });
+  }
+
+  removeInternalObject(index: number): void {
+    this.state.patchParams({
+      internalObjects: this.internalObjects().filter((_, i) => i !== index),
+    });
+  }
+
+  // ---- Sketches -----------------------------------------------------------
+
+  sketches(): SketchFeature[] {
+    return this.params().sketches ?? [];
+  }
+
+  sketchSummary(sketch: SketchFeature): string {
+    const u = this.unit();
+    const size =
+      sketch.shape === 'circle'
+        ? `⌀${sketch.diameter}`
+        : sketch.shape === 'rectangle'
+          ? `${sketch.width}×${sketch.height}`
+          : `${sketch.points.length} pts`;
+    const op = sketch.operation === 'cut' ? 'Cut' : 'Extrude';
+    return `${op} ${sketch.depth} ${u} · ${sketch.shape} ${size} · ${this.surfaceLabel(sketch.surface)} (${sketch.side})`;
+  }
+
+  newSketch(): void {
+    const isImp = this.isImperial();
+    const sketch = isImp
+      ? convertSketch(DEFAULT_SKETCH, 'metric', 'imperial')
+      : { ...DEFAULT_SKETCH, points: [] };
+    this.editingSketch.set({ index: -1, sketch });
+  }
+
+  editSketch(index: number): void {
+    const sketch = this.sketches()[index];
+    if (sketch) {
+      this.editingSketch.set({ index, sketch });
+    }
+  }
+
+  onSketchSaved(sketch: SketchFeature): void {
+    const editing = this.editingSketch();
+    this.editingSketch.set(null);
+    const list = [...this.sketches()];
+    if (editing && editing.index >= 0 && editing.index < list.length) {
+      list[editing.index] = sketch;
+    } else {
+      list.push(sketch);
+    }
+    this.state.patchParams({ sketches: list });
+  }
+
+  updateSketch(index: number, patch: Partial<SketchFeature>): void {
+    this.state.patchParams({
+      sketches: this.sketches().map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    });
+  }
+
+  duplicateSketch(index: number): void {
+    const list = [...this.sketches()];
+    const copy = list[index];
+    if (!copy) return;
+    list.splice(index + 1, 0, {
+      ...copy,
+      points: copy.points.map(([x, y]) => [x, y]),
+      name: copy.name ? `${copy.name} copy` : undefined,
+    });
+    this.state.patchParams({ sketches: list });
+  }
+
+  removeSketch(index: number): void {
+    this.state.patchParams({ sketches: this.sketches().filter((_, i) => i !== index) });
+  }
+
   onWaterproofChange(checked: boolean): void {
     this.state.patchParams({
       waterProof: checked,
@@ -277,35 +426,6 @@ export class ParamsFormComponent {
       this.state.patchParams({
         snapFit: {
           ...current.snapFit,
-          [key]: parsed,
-        },
-      });
-    }
-  }
-
-  setPcbPreviewEnabled(checked: boolean): void {
-    const current = this.params();
-    this.state.patchParams({
-      pcbPreview: {
-        ...current.pcbPreview,
-        enabled: checked,
-      },
-    });
-  }
-
-  setPcbPreviewNumber<K extends Exclude<keyof PCBPreview, 'enabled'>>(
-    key: K,
-    rawValue: string,
-  ): void {
-    if (!rawValue) {
-      return;
-    }
-    const parsed = parseFloat(rawValue);
-    if (!Number.isNaN(parsed)) {
-      const current = this.params();
-      this.state.patchParams({
-        pcbPreview: {
-          ...current.pcbPreview,
           [key]: parsed,
         },
       });

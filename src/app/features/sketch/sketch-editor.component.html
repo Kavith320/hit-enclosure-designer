@@ -1,0 +1,576 @@
+<dialog
+  #dialog
+  class="fixed left-1/2 top-1/2 z-50 m-0 max-h-[calc(100vh-1.5rem)] w-[min(64rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-slate-300/80 bg-white p-0 shadow-[0_20px_56px_rgba(21,43,72,0.28)] backdrop:bg-slate-900/35"
+  (cancel)="onDialogCancel($event)"
+  (keydown)="onKeydown($event)"
+>
+  @let d = draft();
+  @let f = face();
+  <div class="flex max-h-[calc(100vh-1.5rem)] flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+      <h3 class="text-base font-bold text-slate-900">
+        {{ index() >= 0 ? 'Edit sketch ' + (index() + 1) : 'New sketch' }}
+        <span class="ml-2 text-xs font-medium text-slate-500">
+          {{ surfaceLabels[d.surface] }} face · {{ f.width }} × {{ f.height }} {{ unit() }}
+        </span>
+      </h3>
+      <button
+        class="ui-plain inline-flex h-8 w-8 items-center justify-center rounded-full text-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        type="button"
+        (click)="cancel()"
+        aria-label="Close sketch editor"
+      >
+        &times;
+      </button>
+    </div>
+
+    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row">
+      <!-- Canvas column -->
+      <div class="flex min-w-0 flex-1 flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-1 text-xs font-semibold text-slate-700">
+          @for (t of ['move', 'rectangle', 'circle', 'polygon']; track t) {
+            <button
+              type="button"
+              class="ui-plain rounded-lg border px-2.5 py-1.5 transition"
+              [class.border-sky-600]="tool() === t"
+              [class.bg-sky-600]="tool() === t"
+              [class.text-white]="tool() === t"
+              [class.border-slate-200]="tool() !== t"
+              [class.hover:bg-slate-100]="tool() !== t"
+              (click)="setTool($any(t))"
+            >
+              {{
+                t === 'move'
+                  ? '✥ Move'
+                  : t === 'rectangle'
+                    ? '▭ Rectangle'
+                    : t === 'circle'
+                      ? '◯ Circle'
+                      : '✎ Polygon'
+              }}
+            </button>
+          }
+          <span class="mx-1 h-5 w-px bg-slate-200"></span>
+          <label class="flex items-center gap-1.5 select-none">
+            <input
+              type="checkbox"
+              [checked]="snap()"
+              (change)="snap.set($any($event.target).checked)"
+            />
+            Snap
+          </label>
+          <input
+            type="number"
+            min="0.001"
+            step="any"
+            class="w-16 rounded-md border border-slate-300 px-1.5 py-1 text-xs"
+            [value]="snapStep()"
+            (change)="setSnapStep($any($event.target).value)"
+            title="Snap / grid step"
+          />
+          <span class="text-slate-500">{{ unit() }}</span>
+          @if (tool() === 'polygon' && polyPoints().length >= 3) {
+            <button
+              type="button"
+              class="ui-plain ml-auto rounded-lg bg-emerald-600 px-2.5 py-1.5 text-white"
+              (click)="finishPolygon()"
+            >
+              Finish shape
+            </button>
+          }
+        </div>
+
+        <div class="relative rounded-xl border border-slate-200 bg-slate-50">
+          <svg
+            class="block h-[min(60vh,32rem)] w-full touch-none select-none"
+            [class.cursor-crosshair]="tool() !== 'move'"
+            [class.cursor-move]="tool() === 'move'"
+            [attr.viewBox]="viewBox()"
+            preserveAspectRatio="xMidYMid meet"
+            (pointerdown)="onCanvasPointerDown($event)"
+            (pointermove)="onCanvasPointerMove($event)"
+            (pointerup)="onCanvasPointerUp()"
+            (pointerleave)="onCanvasPointerLeave()"
+            (dblclick)="onCanvasDoubleClick()"
+          >
+            <!-- Face-space group: +y up -->
+            <g #canvas transform="scale(1,-1)">
+              <rect
+                [attr.x]="-f.width / 2"
+                [attr.y]="-f.height / 2"
+                [attr.width]="f.width"
+                [attr.height]="f.height"
+                fill="#ffffff"
+                stroke="#334155"
+                stroke-width="2"
+                vector-effect="non-scaling-stroke"
+              />
+              @for (l of gridLines(); track $index) {
+                <line
+                  [attr.x1]="l.x1"
+                  [attr.y1]="l.y1"
+                  [attr.x2]="l.x2"
+                  [attr.y2]="l.y2"
+                  [attr.stroke]="l.major ? '#94a3b8' : '#e2e8f0'"
+                  stroke-width="1"
+                  vector-effect="non-scaling-stroke"
+                />
+              }
+              <!-- Centre axes -->
+              <line
+                [attr.x1]="-f.width / 2"
+                y1="0"
+                [attr.x2]="f.width / 2"
+                y2="0"
+                stroke="#e11d48"
+                stroke-width="1"
+                stroke-dasharray="4 3"
+                vector-effect="non-scaling-stroke"
+              />
+              <line
+                x1="0"
+                [attr.y1]="-f.height / 2"
+                x2="0"
+                [attr.y2]="f.height / 2"
+                stroke="#16a34a"
+                stroke-width="1"
+                stroke-dasharray="4 3"
+                vector-effect="non-scaling-stroke"
+              />
+
+              <!-- Other sketches on this face -->
+              @for (o of otherSketches(); track $index) {
+                <g [attr.transform]="shapeTransform(o)" opacity="0.45">
+                  @if (o.shape === 'circle') {
+                    <circle
+                      cx="0"
+                      cy="0"
+                      [attr.r]="o.diameter / 2"
+                      fill="#cbd5e1"
+                      stroke="#64748b"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  } @else if (o.shape === 'polygon') {
+                    <polygon
+                      [attr.points]="pointsAttr(o.points)"
+                      fill="#cbd5e1"
+                      stroke="#64748b"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  } @else {
+                    <rect
+                      [attr.x]="-o.width / 2"
+                      [attr.y]="-o.height / 2"
+                      [attr.width]="o.width"
+                      [attr.height]="o.height"
+                      [attr.rx]="rectRadius(o)"
+                      fill="#cbd5e1"
+                      stroke="#64748b"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  }
+                </g>
+              }
+
+              <!-- The sketch being edited -->
+              @if (!dragShape() && polyPoints().length === 0) {
+                <g
+                  [attr.transform]="shapeTransform(d)"
+                  [attr.fill]="
+                    d.operation === 'cut' ? 'rgba(225,29,72,0.25)' : 'rgba(2,132,199,0.25)'
+                  "
+                  [attr.stroke]="d.operation === 'cut' ? '#e11d48' : '#0284c7'"
+                  stroke-width="2"
+                >
+                  @if (d.shape === 'circle') {
+                    <circle
+                      cx="0"
+                      cy="0"
+                      [attr.r]="d.diameter / 2"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  } @else if (d.shape === 'polygon') {
+                    @if (d.points.length >= 2) {
+                      <polygon
+                        [attr.points]="pointsAttr(d.points)"
+                        vector-effect="non-scaling-stroke"
+                      />
+                    }
+                  } @else {
+                    <rect
+                      [attr.x]="-d.width / 2"
+                      [attr.y]="-d.height / 2"
+                      [attr.width]="d.width"
+                      [attr.height]="d.height"
+                      [attr.rx]="rectRadius(d)"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  }
+                </g>
+                <circle
+                  [attr.cx]="d.x"
+                  [attr.cy]="d.y"
+                  [attr.r]="labelSize() * 0.15"
+                  fill="#0f172a"
+                />
+              }
+
+              <!-- Live drawing previews -->
+              @if (dragRect(); as r) {
+                <rect
+                  [attr.x]="r.x"
+                  [attr.y]="r.y"
+                  [attr.width]="r.w"
+                  [attr.height]="r.h"
+                  fill="rgba(2,132,199,0.2)"
+                  stroke="#0284c7"
+                  stroke-width="2"
+                  stroke-dasharray="6 4"
+                  vector-effect="non-scaling-stroke"
+                />
+              }
+              @if (dragCircle(); as c) {
+                <circle
+                  [attr.cx]="c.cx"
+                  [attr.cy]="c.cy"
+                  [attr.r]="c.r"
+                  fill="rgba(2,132,199,0.2)"
+                  stroke="#0284c7"
+                  stroke-width="2"
+                  stroke-dasharray="6 4"
+                  vector-effect="non-scaling-stroke"
+                />
+              }
+              @if (polyPoints().length > 0) {
+                @let pts = polyPoints();
+                <polyline
+                  [attr.points]="pointsAttr(cursor() ? pts.concat([cursor()!]) : pts)"
+                  fill="rgba(2,132,199,0.15)"
+                  stroke="#0284c7"
+                  stroke-width="2"
+                  vector-effect="non-scaling-stroke"
+                />
+                @for (p of pts; track $index) {
+                  <circle
+                    [attr.cx]="p[0]"
+                    [attr.cy]="p[1]"
+                    [attr.r]="labelSize() * ($first ? 0.35 : 0.2)"
+                    [attr.fill]="$first ? '#16a34a' : '#0284c7'"
+                  />
+                }
+              }
+              @if (cursor(); as c) {
+                <circle
+                  [attr.cx]="c[0]"
+                  [attr.cy]="c[1]"
+                  [attr.r]="labelSize() * 0.12"
+                  fill="#e11d48"
+                />
+              }
+            </g>
+
+            <!-- Labels (not flipped so text reads normally) -->
+            <text
+              [attr.x]="0"
+              [attr.y]="-f.height / 2 - margin() * 0.35"
+              [attr.font-size]="labelSize()"
+              text-anchor="middle"
+              fill="#475569"
+            >
+              ↑ up
+            </text>
+            @if (dragRect(); as r) {
+              <text
+                [attr.x]="r.x + r.w / 2"
+                [attr.y]="-(r.y + r.h) - labelSize() * 0.4"
+                [attr.font-size]="labelSize()"
+                text-anchor="middle"
+                fill="#0369a1"
+                font-weight="700"
+              >
+                {{ r.w.toFixed(2) }} × {{ r.h.toFixed(2) }}
+              </text>
+            }
+            @if (dragCircle(); as c) {
+              <text
+                [attr.x]="c.cx"
+                [attr.y]="-(c.cy + c.r) - labelSize() * 0.4"
+                [attr.font-size]="labelSize()"
+                text-anchor="middle"
+                fill="#0369a1"
+                font-weight="700"
+              >
+                ⌀ {{ (c.r * 2).toFixed(2) }}
+              </text>
+            }
+          </svg>
+          <div
+            class="pointer-events-none absolute bottom-2 left-2 rounded-md bg-white/90 px-2 py-0.5 text-[11px] tabular-nums text-slate-600"
+          >
+            @if (cursor(); as c) {
+              x {{ c[0].toFixed(2) }} · y {{ c[1].toFixed(2) }} {{ unit() }}
+            } @else {
+              Centre of face = 0, 0 · seen from outside
+            }
+          </div>
+        </div>
+        <p class="text-xs text-slate-500">{{ hint() }}</p>
+      </div>
+
+      <!-- Settings column -->
+      <div class="flex w-full shrink-0 flex-col gap-3 text-xs text-slate-700 md:w-64">
+        <div class="grid grid-cols-2 gap-2">
+          <label class="col-span-2 flex flex-col gap-1">
+            <span class="font-semibold">Name</span>
+            <input
+              type="text"
+              class="rounded-md border border-slate-300 px-2 py-1"
+              placeholder="optional"
+              [value]="d.name ?? ''"
+              (change)="patch({ name: $any($event.target).value })"
+            />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-semibold">Face</span>
+            <select
+              class="rounded-md border border-slate-300 px-1.5 py-1"
+              (change)="setSurface($any($event.target).value)"
+            >
+              @for (s of surfaces; track s) {
+                <option [value]="s" [selected]="s === d.surface">{{ surfaceLabels[s] }}</option>
+              }
+            </select>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-semibold">Start from</span>
+            <select
+              class="rounded-md border border-slate-300 px-1.5 py-1"
+              (change)="setSide($any($event.target).value)"
+            >
+              <option value="outside" [selected]="d.side === 'outside'">Outside</option>
+              <option value="inside" [selected]="d.side === 'inside'">Inside</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 font-semibold">
+          <button
+            type="button"
+            class="ui-plain rounded-md py-1.5"
+            [class.bg-sky-600]="d.operation === 'extrude'"
+            [class.text-white]="d.operation === 'extrude'"
+            (click)="setOperation('extrude')"
+          >
+            ⬆ Extrude (add)
+          </button>
+          <button
+            type="button"
+            class="ui-plain rounded-md py-1.5"
+            [class.bg-rose-600]="d.operation === 'cut'"
+            [class.text-white]="d.operation === 'cut'"
+            (click)="setOperation('cut')"
+          >
+            ⬇ Cut (remove)
+          </button>
+        </div>
+
+        <label class="flex flex-col gap-1">
+          <span class="font-semibold">
+            {{ d.operation === 'extrude' ? 'Extrude height' : 'Cut depth' }} ({{ unit() }})
+          </span>
+          <input
+            type="number"
+            min="0.01"
+            step="any"
+            class="rounded-md border border-slate-300 px-2 py-1"
+            [value]="d.depth"
+            (change)="patchNumber('depth', $any($event.target).value)"
+          />
+          <span class="text-[11px] text-slate-500">
+            Material here is {{ f.thickness.toFixed(2) }} {{ unit() }} thick.
+            @if (d.operation === 'cut' && d.depth >= f.thickness) {
+              <b class="text-rose-600">Cuts all the way through.</b>
+            }
+          </span>
+        </label>
+
+        <div class="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 font-semibold">
+          @for (sh of ['rectangle', 'circle', 'polygon']; track sh) {
+            <button
+              type="button"
+              class="ui-plain rounded-md py-1.5 capitalize"
+              [class.bg-white]="d.shape === sh"
+              [class.shadow]="d.shape === sh"
+              (click)="setShape($any(sh))"
+            >
+              {{ sh }}
+            </button>
+          }
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex flex-col gap-1">
+            <span class="font-semibold">Centre X ({{ unit() }})</span>
+            <input
+              type="number"
+              step="any"
+              class="rounded-md border border-slate-300 px-2 py-1"
+              [value]="d.x"
+              (change)="patchNumber('x', $any($event.target).value)"
+            />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-semibold">Centre Y ({{ unit() }})</span>
+            <input
+              type="number"
+              step="any"
+              class="rounded-md border border-slate-300 px-2 py-1"
+              [value]="d.y"
+              (change)="patchNumber('y', $any($event.target).value)"
+            />
+          </label>
+
+          @if (d.shape === 'rectangle') {
+            <label class="flex flex-col gap-1">
+              <span class="font-semibold">Width ({{ unit() }})</span>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                class="rounded-md border border-slate-300 px-2 py-1"
+                [value]="d.width"
+                (change)="patchNumber('width', $any($event.target).value)"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-semibold">Height ({{ unit() }})</span>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                class="rounded-md border border-slate-300 px-2 py-1"
+                [value]="d.height"
+                (change)="patchNumber('height', $any($event.target).value)"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-semibold">Corner radius</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                class="rounded-md border border-slate-300 px-2 py-1"
+                [value]="d.cornerRadius"
+                (change)="patchNumber('cornerRadius', $any($event.target).value)"
+              />
+            </label>
+          }
+
+          @if (d.shape === 'circle') {
+            <label class="flex flex-col gap-1">
+              <span class="font-semibold">Diameter ({{ unit() }})</span>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                class="rounded-md border border-slate-300 px-2 py-1"
+                [value]="d.diameter"
+                (change)="patchNumber('diameter', $any($event.target).value)"
+              />
+            </label>
+          }
+
+          @if (d.shape !== 'circle') {
+            <label class="flex flex-col gap-1">
+              <span class="font-semibold">Rotation (°)</span>
+              <input
+                type="number"
+                step="any"
+                class="rounded-md border border-slate-300 px-2 py-1"
+                [value]="d.rotation"
+                (change)="patchNumber('rotation', $any($event.target).value)"
+              />
+            </label>
+          }
+        </div>
+
+        <button
+          type="button"
+          class="ui-plain self-start rounded-md border border-slate-300 px-2 py-1 hover:bg-slate-100"
+          (click)="centerOnFace()"
+        >
+          Centre on face
+        </button>
+
+        @if (d.shape === 'polygon') {
+          <div class="flex flex-col gap-1">
+            <span class="font-semibold">Points (relative to centre)</span>
+            @if (d.points.length === 0) {
+              <span class="text-slate-500">Use the ✎ Polygon tool to draw the outline.</span>
+            }
+            <div class="max-h-48 overflow-y-auto pr-1">
+              @for (p of d.points; track $index) {
+                <div class="mb-1 flex items-center gap-1">
+                  <span class="w-5 text-right text-slate-400">{{ $index + 1 }}</span>
+                  <input
+                    type="number"
+                    step="any"
+                    class="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-0.5"
+                    [value]="p[0]"
+                    (change)="updatePoint($index, 0, $any($event.target).value)"
+                  />
+                  <input
+                    type="number"
+                    step="any"
+                    class="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-0.5"
+                    [value]="p[1]"
+                    (change)="updatePoint($index, 1, $any($event.target).value)"
+                  />
+                  <button
+                    type="button"
+                    class="ui-plain px-1 text-slate-500 hover:text-sky-700"
+                    title="Insert a point after this one"
+                    (click)="addPointAfter($index)"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    class="ui-plain px-1 text-slate-500 hover:text-rose-600"
+                    title="Remove point"
+                    (click)="removePoint($index)"
+                  >
+                    ×
+                  </button>
+                </div>
+              }
+            </div>
+            @if (polygonWarning()) {
+              <span class="text-rose-600">{{ polygonWarning() }}</span>
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+      <button
+        type="button"
+        class="ui-plain rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+        (click)="cancel()"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="ui-plain rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+        [disabled]="!canSave()"
+        (click)="save()"
+      >
+        {{ index() >= 0 ? 'Save changes' : 'Add to enclosure' }}
+      </button>
+    </div>
+  </div>
+</dialog>

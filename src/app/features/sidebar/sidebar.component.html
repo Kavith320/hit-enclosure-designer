@@ -2,13 +2,23 @@
   <div class="sidebar-scroll h-full overflow-y-auto pb-20 pr-1">
     <div class="space-y-8">
       <section>
-        <div class="mb-3 flex items-center justify-between">
-          <h1 class="text-sm font-extrabold uppercase tracking-wider text-slate-600">
-            Easy Enclosure
+        <div class="mb-3">
+          <img
+            src="hit-innovations-logo.png"
+            alt="HIT Innovations"
+            class="h-7 w-auto max-w-full"
+            width="1200"
+            height="193"
+          />
+          <h1 class="mt-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
+            Enclosure Designer
           </h1>
-          <img src="easy-enclosure-logo.svg" alt="Easy Enclosure logo" class="h-14 w-14" />
         </div>
         <hr class="border-slate-200" />
+      </section>
+
+      <section aria-label="Project">
+        <app-projects />
       </section>
 
       <section aria-label="Quick actions">
@@ -47,13 +57,6 @@
         </h2>
         <app-params-form />
       </section>
-
-      <section>
-        <h2 class="mb-3 text-xs font-extrabold uppercase tracking-wider text-slate-600">
-          Support the project
-        </h2>
-        <app-funding />
-      </section>
     </div>
   </div>
 
@@ -63,7 +66,18 @@
     <div
       class="border-t border-slate-200 pt-4 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 select-none"
     >
-      v{{ appVersion }}
+      HIT Innovations Pvt. Ltd · v{{ appVersion }}
+      <div class="mt-1 text-[9px] font-medium normal-case tracking-normal text-slate-400">
+        Based on
+        <a
+          class="pointer-events-auto underline hover:text-slate-600"
+          href="https://github.com/bruceborrett/easy-enclosure"
+          target="_blank"
+          rel="noopener"
+          >Easy Enclosure</a
+        >
+        (MIT)
+      </div>
     </div>
   </div>
 </div>

@@ -1,6 +1,6 @@
 import { fakeAsync, flushMicrotasks, TestBed, tick } from '@angular/core/testing';
 
-import { DEFAULT_PARAMS } from '../../core/params';
+import { DEFAULT_INTERNAL_OBJECT, DEFAULT_PARAMS, DEFAULT_PCB } from '../../core/params';
 import { EnclosureStateService } from '../../core/state/enclosure-state.service';
 import { RendererComponent } from './renderer.component';
 
@@ -189,88 +189,84 @@ describe('RendererComponent', () => {
     });
   });
 
-  describe('PCB preview and collision detection', () => {
-    it('returns empty entities and clears collision when pcbPreview is disabled', () => {
+  describe('PCB / internal object preview and collision detection', () => {
+    it('returns empty entities and clears collisions when there are no parts', () => {
       const fixture = TestBed.createComponent(RendererComponent);
       component = fixture.componentInstance;
 
-      const params = {
-        ...DEFAULT_PARAMS,
-        pcbPreview: {
-          ...DEFAULT_PARAMS.pcbPreview,
-          enabled: false,
-        },
-      };
-
+      const params = { ...DEFAULT_PARAMS, pcbs: [], internalObjects: [] };
       const entities = (component as any).buildPcbEntities(params);
       expect(entities).toEqual([]);
-      expect(component.pcbCollision().collides).toBeFalse();
+      expect(component.collidingParts().length).toBe(0);
     });
 
-    it('builds board and component entities when enabled and fits without collision', () => {
+    it('builds board and component entities for a PCB that fits', () => {
       const fixture = TestBed.createComponent(RendererComponent);
       component = fixture.componentInstance;
 
       const params = {
         ...DEFAULT_PARAMS,
         internalWalls: [],
-        pcbPreview: {
-          enabled: true,
-          width: 30,
-          length: 30,
-          thickness: 1.6,
-          componentHeight: 5,
-          x: 0,
-          y: 0,
-        },
+        pcbs: [{ ...DEFAULT_PCB, width: 30, length: 30, componentHeight: 5 }],
       };
-
       const entities = (component as any).buildPcbEntities(params);
       expect(entities.length).toBe(2);
-      expect(component.pcbCollision().collides).toBeFalse();
+      expect(component.collidingParts().length).toBe(0);
     });
 
-    it('flags collision and sets pcbCollision signal when PCB overlaps walls', () => {
+    it('flags a PCB that overlaps the walls', () => {
       const fixture = TestBed.createComponent(RendererComponent);
       component = fixture.componentInstance;
 
       const params = {
         ...DEFAULT_PARAMS,
-        pcbPreview: {
-          enabled: true,
-          width: 200,
-          length: 200,
-          thickness: 1.6,
-          componentHeight: 5,
-          x: 0,
-          y: 0,
-        },
+        pcbs: [{ ...DEFAULT_PCB, name: 'Big', width: 200, length: 200, componentHeight: 5 }],
       };
-
-      const entities = (component as any).buildPcbEntities(params);
-      expect(entities.length).toBe(2);
-      expect(component.pcbCollision().collides).toBeTrue();
-      expect(component.pcbCollision().hitsWalls).toBeTrue();
+      (component as any).buildPcbEntities(params);
+      expect(component.collidingParts().length).toBe(1);
+      expect(component.collidingParts()[0].hitsWalls).toBeTrue();
     });
 
-    it('renders collision alert overlay in DOM when collision is active', () => {
+    it('flags two parts that overlap each other', () => {
+      const fixture = TestBed.createComponent(RendererComponent);
+      component = fixture.componentInstance;
+
+      const params = {
+        ...DEFAULT_PARAMS,
+        internalWalls: [],
+        pcbs: [{ ...DEFAULT_PCB, name: 'Main', width: 20, length: 20, componentHeight: 5 }],
+        internalObjects: [{ ...DEFAULT_INTERNAL_OBJECT, name: 'Battery', width: 10, length: 10 }],
+      };
+      (component as any).buildPcbEntities(params);
+      const names = component.collidingParts().map((p) => p.name);
+      expect(names).toEqual(['Main', 'Battery']);
+      expect(component.collidingParts()[0].overlaps).toEqual(['Battery']);
+    });
+
+    it('renders the collision alert overlay listing the part', () => {
       const fixture = TestBed.createComponent(RendererComponent);
       component = fixture.componentInstance;
 
       fixture.detectChanges();
       expect(fixture.nativeElement.querySelector('.border-red-300')).toBeNull();
 
-      component.pcbCollision.set({
-        collides: true,
-        hitsWalls: true,
-        hitsCeiling: false,
-        overlapVolume: 42.5,
-      });
+      component.partCollisions.set([
+        {
+          kind: 'pcb',
+          index: 0,
+          name: 'Main board',
+          collides: true,
+          hitsWalls: true,
+          hitsCeiling: false,
+          wallOverlapVolume: 42.5,
+          overlaps: [],
+        },
+      ]);
 
       fixture.detectChanges();
       const alertEl = fixture.nativeElement.querySelector('.border-red-300');
       expect(alertEl).not.toBeNull();
-      expect(alertEl.textContent).toContain('PCB Collision');
+      expect(alertEl.textContent).toContain('Main board');
       expect(alertEl.textContent).toContain('42.5 mm³');
     });
   });
